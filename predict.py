@@ -22,7 +22,7 @@ def main(args):
         model.load_state_dict(checkpoint["state_dict"])
         print(f"Loaded weights from {model_path}")
     else:
-        print(f"Warning: No weights found at {model_path}. Using random weights.")
+        raise FileNotFoundError(f"Không tìm thấy file trọng số tại: {model_path}. Vui lòng chạy huấn luyện trước khi dự đoán.")
     
     model.eval()
     

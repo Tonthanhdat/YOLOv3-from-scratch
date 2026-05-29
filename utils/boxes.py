@@ -78,30 +78,37 @@ def cells_to_bboxes(predictions, anchors, S, is_preds=True):
     """
     Chuyển đổi tensor dự đoán (hoặc target) dạng Grid-scale về dạng box tương đối [0, 1] 
     trên toàn ảnh: [batch_size, num_anchors * S * S, 6] (6 là [class, score, x, y, w, h])
+    Format của predictions/target: [x, y, w, h, objectness, class_0, class_1, ...]
     """
     BATCH_SIZE = predictions.shape[0]
     num_anchors = len(anchors)
-    box_predictions = predictions[..., 1:5]
+    
+    box_predictions = predictions[..., 0:4].clone()
+    
     if is_preds:
-        anchors = anchors.reshape(1, len(anchors), 1, 1, 2)
+        anchors = anchors.reshape(1, num_anchors, 1, 1, 2)
         box_predictions[..., 0:2] = torch.sigmoid(box_predictions[..., 0:2])
-        box_predictions[..., 2:] = torch.exp(box_predictions[..., 2:]) * anchors
-        scores = torch.sigmoid(predictions[..., 0:1])
-        best_class = torch.argmax(predictions[..., 5:], dim=-1).unsqueeze(-1)
+        box_predictions[..., 2:4] = torch.exp(box_predictions[..., 2:4]) * anchors
+        
+        obj_scores = torch.sigmoid(predictions[..., 4:5])
+        class_probs = torch.softmax(predictions[..., 5:], dim=-1)
+        class_scores, best_class = torch.max(class_probs, dim=-1, keepdim=True)
+        
+        scores = obj_scores * class_scores
     else:
-        scores = predictions[..., 0:1]
-        best_class = torch.argmax(predictions[..., 5:], dim=-1).unsqueeze(-1)
+        scores = predictions[..., 4:5]
+        best_class = torch.argmax(predictions[..., 5:], dim=-1, keepdim=True)
 
     cell_indices = (
         torch.arange(S)
-        .repeat(predictions.shape[0], 3, S, 1)
+        .repeat(BATCH_SIZE, num_anchors, S, 1)
         .unsqueeze(-1)
         .to(predictions.device)
     )
-    x = 1 / S * (box_predictions[..., 0:1] + cell_indices)
-    y = 1 / S * (box_predictions[..., 1:2] + cell_indices.permute(0, 1, 3, 2, 4))
-    w_h = 1 / S * box_predictions[..., 2:4]
     
-    # converted_bboxes shape: (batch_size, 3, S, S, 4)
-    converted_bboxes = torch.cat((best_class, scores, x, y, w_h), dim=-1).reshape(BATCH_SIZE, num_anchors * S * S, 6)
+    x = (box_predictions[..., 0:1] + cell_indices) / S
+    y = (box_predictions[..., 1:2] + cell_indices.permute(0, 1, 3, 2, 4)) / S
+    w_h = box_predictions[..., 2:4] / S
+    
+    converted_bboxes = torch.cat((best_class.float(), scores, x, y, w_h), dim=-1).reshape(BATCH_SIZE, num_anchors * S * S, 6)
     return converted_bboxes.tolist()

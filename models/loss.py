@@ -12,7 +12,7 @@ class YOLOLoss(nn.Module):
 
         # Trọng số của các thành phần loss theo YOLOv3 paper
         self.lambda_class = 1
-        self.lambda_noobj = 10
+        self.lambda_noobj = 1
         self.lambda_obj = 1
         self.lambda_box = 10
 
@@ -33,16 +33,24 @@ class YOLOLoss(nn.Module):
 
         # 2. Object Loss
         anchors = anchors.reshape(1, 3, 1, 1, 2)
-        box_preds = torch.cat([self.sigmoid(predictions[..., 0:2]), torch.exp(predictions[..., 2:4]) * anchors], dim=-1)
-        ious = intersection_over_union(box_preds[obj], target[..., 0:4][obj]).detach()
+        
+        # Sử dụng bản sao để tính IoU, tránh inplace operation
+        pred_box_temp = predictions[..., 0:4].clone()
+        pred_box_temp[..., 0:2] = self.sigmoid(pred_box_temp[..., 0:2])
+        pred_box_temp[..., 2:4] = torch.exp(pred_box_temp[..., 2:4]) * anchors
+        
+        ious = intersection_over_union(pred_box_temp[obj], target[..., 0:4][obj]).detach()
         # Mục tiêu BCE ở đây sử dụng ious làm trọng số ground truth
         object_loss = self.bce((predictions[..., 4:5][obj]), (ious * target[..., 4:5][obj]))
 
-        # 3. Box Coordinates Loss
-        predictions[..., 0:2] = self.sigmoid(predictions[..., 0:2])
-        # scale w,h targets
-        target[..., 2:4] = torch.log(1e-16 + target[..., 2:4] / anchors)
-        box_loss = self.mse(predictions[..., 0:4][obj], target[..., 0:4][obj])
+        # 3. Box Coordinates Loss (Sử dụng clone để tránh sửa trực tiếp tensor gốc)
+        pred_box = predictions[..., 0:4].clone()
+        pred_box[..., 0:2] = self.sigmoid(pred_box[..., 0:2])
+        
+        target_box = target[..., 0:4].clone()
+        target_box[..., 2:4] = torch.log(1e-16 + target_box[..., 2:4] / anchors)
+        
+        box_loss = self.mse(pred_box[obj], target_box[obj])
 
         # 4. Class Loss
         class_loss = self.entropy(

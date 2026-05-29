@@ -6,15 +6,12 @@ def iou(box, clusters):
     # box: [w, h], clusters: N x 2
     x = np.minimum(clusters[:, 0], box[0])
     y = np.minimum(clusters[:, 1], box[1])
-    if np.count_nonzero(x == 0) == 0 or np.count_nonzero(y == 0) == 0:
-        return np.zeros(clusters.shape[0])
 
     intersection = x * y
     box_area = box[0] * box[1]
     cluster_area = clusters[:, 0] * clusters[:, 1]
 
-    iou_ = intersection / (box_area + cluster_area - intersection)
-    return iou_
+    return intersection / (box_area + cluster_area - intersection + 1e-6)
 
 def kmeans(boxes, k, dist=np.median):
     # boxes: N x 2 [w, h]
@@ -76,6 +73,43 @@ def get_anchors(annotation_file, image_size=416):
     
     return anchors
 
+def update_config_anchors(anchors, config_path):
+    if not os.path.exists(config_path):
+        print(f"Config file not found at {config_path}")
+        return
+        
+    with open(config_path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+        
+    new_lines = []
+    in_anchors = False
+    anchors_inserted = False
+    
+    for line in lines:
+        if line.strip().startswith("ANCHORS = ["):
+            in_anchors = True
+            continue
+        if in_anchors:
+            if line.strip() == "]":
+                in_anchors = False
+                # Chèn ANCHORS mới vào đây
+                new_lines.append("ANCHORS = [\n")
+                new_lines.append(f"    [({anchors[6][0]}, {anchors[6][1]}), ({anchors[7][0]}, {anchors[7][1]}), ({anchors[8][0]}, {anchors[8][1]})], # Scale 13x13 (Stride 32)\n")
+                new_lines.append(f"    [({anchors[3][0]}, {anchors[3][1]}), ({anchors[4][0]}, {anchors[4][1]}), ({anchors[5][0]}, {anchors[5][1]})], # Scale 26x26 (Stride 16)\n")
+                new_lines.append(f"    [({anchors[0][0]}, {anchors[0][1]}), ({anchors[1][0]}, {anchors[1][1]}), ({anchors[2][0]}, {anchors[2][1]})], # Scale 52x52 (Stride 8)\n")
+                new_lines.append("]\n")
+                anchors_inserted = True
+            continue
+        new_lines.append(line)
+        
+    if not anchors_inserted:
+        print("Cảnh báo: Không thể tự động thay thế ANCHORS trong config.py. Vui lòng tự cập nhật.")
+        return
+        
+    with open(config_path, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)
+    print(f"Đã tự động cập nhật anchors mới vào {config_path}!")
+
 if __name__ == "__main__":
     train_json = os.path.join(os.path.dirname(__file__), "../public/annotations/train.json")
     if os.path.exists(train_json):
@@ -92,5 +126,9 @@ if __name__ == "__main__":
         print(f"    [({anchors[3][0]}, {anchors[3][1]}), ({anchors[4][0]}, {anchors[4][1]}), ({anchors[5][0]}, {anchors[5][1]})], # Scale 26x26 (Ảnh 416, stride 16)")
         print(f"    [({anchors[0][0]}, {anchors[0][1]}), ({anchors[1][0]}, {anchors[1][1]}), ({anchors[2][0]}, {anchors[2][1]})], # Scale 52x52 (Ảnh 416, stride 8)")
         print("]")
+        
+        # Tự động cập nhật config.py
+        config_file_path = os.path.join(os.path.dirname(__file__), "../config.py")
+        update_config_anchors(anchors, config_file_path)
     else:
         print(f"File not found: {train_json}")
