@@ -48,6 +48,17 @@ def main(args):
     print(f"Training on device: {config.DEVICE}")
     model = YOLOv3(num_classes=config.NUM_CLASSES).to(config.DEVICE)
     optimizer = optim.Adam(model.parameters(), lr=config.LEARNING_RATE, weight_decay=config.WEIGHT_DECAY)
+    
+    # Tự động tiếp tục từ file được chỉ định hoặc mặc định từ last.pth
+    checkpoint_file = args.resume if args.resume else os.path.join(args.checkpoint_dir, "last.pth")
+    if os.path.exists(checkpoint_file):
+        print(f"=> Tìm thấy checkpoint: {checkpoint_file}. Đang tải để tiếp tục huấn luyện...")
+        checkpoint = torch.load(checkpoint_file, map_location=config.DEVICE, weights_only=False)
+        model.load_state_dict(checkpoint["state_dict"])
+        optimizer.load_state_dict(checkpoint["optimizer"])
+    else:
+        print(f"=> Không tìm thấy checkpoint để tiếp tục. Sẽ huấn luyện từ đầu (Train from scratch).")
+
     loss_fn = YOLOLoss()
     scaler = torch.cuda.amp.GradScaler() if config.DEVICE == 'cuda' else None
 
@@ -148,6 +159,7 @@ if __name__ == "__main__":
     parser.add_argument("--image_dir", type=str, required=True, help="Path to train images")
     parser.add_argument("--val_image_dir", type=str, required=True, help="Path to val images")
     parser.add_argument("--checkpoint_dir", type=str, required=True, help="Path to save models")
+    parser.add_argument("--resume", type=str, default="", help="Path to specific checkpoint to resume from (e.g. models/best.pth)")
     args = parser.parse_args()
 
     main(args)
