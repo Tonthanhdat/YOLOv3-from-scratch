@@ -10,7 +10,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 BATCH_SIZE = 8
 LEARNING_RATE = 1e-4
 WEIGHT_DECAY = 1e-4
-NUM_EPOCHS = 50
+NUM_EPOCHS = 20
 NUM_WORKERS = 2
 PIN_MEMORY = True
 
