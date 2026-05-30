@@ -89,7 +89,8 @@ class YOLODataset(Dataset):
                     targets[scale_idx][anchor_on_scale, i, j, 4] = 1 # obj conf = 1
                     
                     x_cell_grid, y_cell_grid = s * x_cell - j, s * y_cell - i
-                    width_cell, height_cell = w / self.image_size, h / self.image_size
+                    width_cell = (w / self.image_size) * s
+                    height_cell = (h / self.image_size) * s
                     
                     targets[scale_idx][anchor_on_scale, i, j, 0:4] = torch.tensor([x_cell_grid, y_cell_grid, width_cell, height_cell])
                     targets[scale_idx][anchor_on_scale, i, j, 5 + class_id] = 1 # one-hot class

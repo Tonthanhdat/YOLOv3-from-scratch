@@ -31,7 +31,7 @@ def main(args):
     predictions_list = []
     
     scaled_anchors = (
-        torch.tensor(config.ANCHORS)
+        (torch.tensor(config.ANCHORS) / config.IMAGE_SIZE)
         * torch.tensor(config.S).unsqueeze(1).unsqueeze(1).repeat(1, 3, 2)
     ).to(device)
 
