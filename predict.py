@@ -97,6 +97,10 @@ def main(args):
                 xmax = min(float(orig_w), float(xmax))
                 ymax = min(float(orig_h), float(ymax))
                 
+                # Bỏ qua các box bị bóp méo hoặc lật ngược do nghịch lý hệ tọa độ lề
+                if xmax <= xmin or ymax <= ymin:
+                    continue
+                
                 img_boxes.append({
                     "class": config.CLASSES[class_id],
                     "confidence": round(confidence, 4),

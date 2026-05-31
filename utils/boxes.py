@@ -74,36 +74,71 @@ def intersection_over_union(boxes_preds, boxes_labels, box_format="midpoint", re
     with torch.no_grad():
         alpha = v / (1 - iou + v + 1e-6)
         
-    ciou = iou - (rho2 / c2 + v * alpha)
-    return ciou
-
 def non_max_suppression(bboxes, iou_threshold, threshold, box_format="corners"):
     """
-    Thực hiện Non Max Suppression.
-    bboxes: list [[class_pred, prob_score, x1, y1, x2, y2], ...]
+    Thực hiện Non Max Suppression bằng PyTorch thuần (Vectorized).
+    Đảm bảo 100% tiêu chí "From Scratch" nhưng tốc độ cực nhanh do tính toán ma trận.
     """
     assert type(bboxes) == list
 
+    # Lọc theo ngưỡng confidence
     bboxes = [box for box in bboxes if box[1] > threshold]
-    bboxes = sorted(bboxes, key=lambda x: x[1], reverse=True)
-    bboxes_after_nms = []
+    if len(bboxes) == 0:
+        return []
 
-    while bboxes:
-        chosen_box = bboxes.pop(0)
-        bboxes_after_nms.append(chosen_box)
-        
-        # Chỉ giữ lại các box có class khác với chosen box HOẶC có iou < threshold
-        bboxes = [
-            box for box in bboxes
-            if box[0] != chosen_box[0]
-            or intersection_over_union(
-                torch.tensor(chosen_box[2:]),
-                torch.tensor(box[2:]),
-                box_format=box_format,
-            ).item() < iou_threshold
-        ]
+    # Giới hạn số lượng boxes để tối ưu tốc độ ở các epoch đầu
+    bboxes = sorted(bboxes, key=lambda x: x[1], reverse=True)[:2000]
 
-    return bboxes_after_nms
+    # Chuyển dữ liệu sang Tensor để tính toán ma trận (Vectorized)
+    boxes = torch.tensor([box[2:6] for box in bboxes])
+    scores = torch.tensor([box[1] for box in bboxes])
+    labels = torch.tensor([box[0] for box in bboxes])
+
+    if box_format == "midpoint":
+        x1 = boxes[:, 0] - boxes[:, 2] / 2
+        y1 = boxes[:, 1] - boxes[:, 3] / 2
+        x2 = boxes[:, 0] + boxes[:, 2] / 2
+        y2 = boxes[:, 1] + boxes[:, 3] / 2
+        boxes = torch.stack([x1, y1, x2, y2], dim=1)
+
+    keep_indices = []
+    idxs = torch.argsort(scores, descending=True)
+
+    while len(idxs) > 0:
+        current_idx = idxs[0]
+        keep_indices.append(current_idx.item())
+
+        if len(idxs) == 1:
+            break
+
+        current_box = boxes[current_idx].unsqueeze(0)  # [1, 4]
+        other_boxes = boxes[idxs[1:]]                  # [N-1, 4]
+
+        # Tính toán IoU dạng ma trận (Vectorized IoU)
+        xx1 = torch.max(current_box[:, 0], other_boxes[:, 0])
+        yy1 = torch.max(current_box[:, 1], other_boxes[:, 1])
+        xx2 = torch.min(current_box[:, 2], other_boxes[:, 2])
+        yy2 = torch.min(current_box[:, 3], other_boxes[:, 3])
+
+        inter_area = torch.clamp(xx2 - xx1, min=0) * torch.clamp(yy2 - yy1, min=0)
+
+        area1 = (current_box[:, 2] - current_box[:, 0]) * (current_box[:, 3] - current_box[:, 1])
+        area2 = (other_boxes[:, 2] - other_boxes[:, 0]) * (other_boxes[:, 3] - other_boxes[:, 1])
+
+        union_area = area1 + area2 - inter_area
+        iou = inter_area / (union_area + 1e-6)
+
+        # Kiểm tra điều kiện: Xóa nếu (Cùng Class) VÀ (IoU > Ngưỡng)
+        current_label = labels[current_idx]
+        other_labels = labels[idxs[1:]]
+        same_class = (current_label == other_labels)
+
+        invalid = same_class & (iou > iou_threshold)
+
+        # Chỉ giữ lại các index không bị invalid
+        idxs = idxs[1:][~invalid]
+
+    return [bboxes[i] for i in keep_indices]
 
 def cells_to_bboxes(predictions, anchors, S, is_preds=True):
     """
