@@ -6,23 +6,26 @@ from PIL import Image
 from tqdm import tqdm
 
 import config
-from models.yolov3 import YOLOv3
+from models.resnet_fpn_detector import ResNetFPNDetector
 from utils.transforms import YoloTransforms
 from utils.boxes import cells_to_bboxes, non_max_suppression
 
 def main(args):
     device = config.DEVICE
-    model = YOLOv3(num_classes=config.NUM_CLASSES).to(device)
+    model = ResNetFPNDetector(num_classes=config.NUM_CLASSES, pretrained=False).to(device)
     
     # Load model. Đề bài yêu cầu best.pth lưu ở ./models/
-    # Truyền vào --checkpoint_dir='./models/' khi train. Ở predict sẽ tự trỏ vào models/best.pth
-    model_path = os.path.join(os.path.dirname(__file__), "models", "best.pth")
+    if args.weights:
+        model_path = args.weights
+    else:
+        model_path = os.path.join(os.path.dirname(__file__), "models", "best.pth")
+        
     if os.path.exists(model_path):
-        checkpoint = torch.load(model_path, map_location=device)
+        checkpoint = torch.load(model_path, map_location=device, weights_only=False)
         model.load_state_dict(checkpoint["state_dict"])
         print(f"Loaded weights from {model_path}")
     else:
-        raise FileNotFoundError(f"Không tìm thấy file trọng số tại: {model_path}. Vui lòng chạy huấn luyện trước khi dự đoán.")
+        raise FileNotFoundError(f"Không tìm thấy file trọng số tại: {model_path}.")
     
     model.eval()
     
@@ -113,6 +116,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--image_dir", type=str, required=True, help="Path to images")
     parser.add_argument("--output", type=str, required=True, help="Path to output predictions.json")
+    parser.add_argument("--weights", type=str, default="", help="Path to weights file (optional)")
     args = parser.parse_args()
 
     main(args)
+

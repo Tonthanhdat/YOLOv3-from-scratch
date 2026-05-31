@@ -52,4 +52,10 @@ class YoloTransforms:
             color_jitter = transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1)
             image = color_jitter(image)
             
+        normalize = transforms.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225]
+        )
+        image = normalize(image)
+            
         return image, torch.tensor(new_bboxes)

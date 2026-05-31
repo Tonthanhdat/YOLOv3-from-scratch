@@ -12,7 +12,7 @@ class YOLOLoss(nn.Module):
 
         # Trọng số của các thành phần loss theo YOLOv3 paper
         self.lambda_class = 1
-        self.lambda_noobj = 10 # Tăng phạt các box rác (False Positive) lên 10 lần
+        self.lambda_noobj = 5 # Giảm từ 10 xuống 5 vì Backbone mới phân loại tốt hơn
         self.lambda_obj = 1
         self.lambda_box = 10
 
@@ -35,6 +35,10 @@ class YOLOLoss(nn.Module):
         anchors = anchors.reshape(1, 3, 1, 1, 2)
         
         # Sử dụng bản sao để tính IoU, tránh inplace operation
+        # Ngăn lỗi NaN nếu batch không có object nào trên grid này
+        if obj.sum() == 0:
+            return self.lambda_noobj * no_object_loss
+
         pred_box_temp = predictions[..., 0:4].clone()
         pred_box_temp[..., 0:2] = self.sigmoid(pred_box_temp[..., 0:2])
         pred_box_temp[..., 2:4] = torch.exp(pred_box_temp[..., 2:4]) * anchors
