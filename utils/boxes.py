@@ -10,9 +10,9 @@ def iou_width_height(box1, boxes2):
     union = (box1[0] * box1[1]) + (boxes2[:, 0] * boxes2[:, 1]) - intersection
     return intersection / (union + 1e-6)
 
-def intersection_over_union(boxes_preds, boxes_labels, box_format="midpoint"):
+def intersection_over_union(boxes_preds, boxes_labels, box_format="midpoint", return_ciou=False):
     """
-    Tính IoU giữa dự đoán và label.
+    Tính IoU giữa dự đoán và label. Tích hợp tùy chọn tính CIoU (Complete IoU).
     box_format: "midpoint" [x_mid, y_mid, w, h] hoặc "corners" [x1, y1, x2, y2]
     """
     if box_format == "midpoint":
@@ -44,7 +44,38 @@ def intersection_over_union(boxes_preds, boxes_labels, box_format="midpoint"):
     box1_area = abs((box1_x2 - box1_x1) * (box1_y2 - box1_y1))
     box2_area = abs((box2_x2 - box2_x1) * (box2_y2 - box2_y1))
 
-    return intersection / (box1_area + box2_area - intersection + 1e-6)
+    iou = intersection / (box1_area + box2_area - intersection + 1e-6)
+    
+    if not return_ciou:
+        return iou
+        
+    # Tính CIoU
+    import math
+    if box_format == "midpoint":
+        center_x1, center_y1 = boxes_preds[..., 0:1], boxes_preds[..., 1:2]
+        w1, h1 = boxes_preds[..., 2:3], boxes_preds[..., 3:4]
+        center_x2, center_y2 = boxes_labels[..., 0:1], boxes_labels[..., 1:2]
+        w2, h2 = boxes_labels[..., 2:3], boxes_labels[..., 3:4]
+    else:
+        center_x1, center_y1 = (box1_x2 + box1_x1) / 2, (box1_y2 + box1_y1) / 2
+        w1, h1 = box1_x2 - box1_x1, box1_y2 - box1_y1
+        center_x2, center_y2 = (box2_x2 + box2_x1) / 2, (box2_y2 + box2_y1) / 2
+        w2, h2 = box2_x2 - box2_x1, box2_y2 - box2_y1
+
+    rho2 = (center_x1 - center_x2)**2 + (center_y1 - center_y2)**2
+    
+    c_x1 = torch.min(box1_x1, box2_x1)
+    c_y1 = torch.min(box1_y1, box2_y1)
+    c_x2 = torch.max(box1_x2, box2_x2)
+    c_y2 = torch.max(box1_y2, box2_y2)
+    c2 = (c_x2 - c_x1)**2 + (c_y2 - c_y1)**2 + 1e-6
+    
+    v = (4 / (math.pi ** 2)) * torch.pow(torch.atan(w2 / (h2 + 1e-6)) - torch.atan(w1 / (h1 + 1e-6)), 2)
+    with torch.no_grad():
+        alpha = v / (1 - iou + v + 1e-6)
+        
+    ciou = iou - (rho2 / c2 + v * alpha)
+    return ciou
 
 def non_max_suppression(bboxes, iou_threshold, threshold, box_format="corners"):
     """

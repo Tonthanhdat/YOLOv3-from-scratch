@@ -12,7 +12,7 @@ class YOLOLoss(nn.Module):
 
         # Trọng số của các thành phần loss theo YOLOv3 paper
         self.lambda_class = 1
-        self.lambda_noobj = 1
+        self.lambda_noobj = 10 # Tăng phạt các box rác (False Positive) lên 10 lần
         self.lambda_obj = 1
         self.lambda_box = 10
 
@@ -43,14 +43,10 @@ class YOLOLoss(nn.Module):
         # Mục tiêu BCE ở đây sử dụng ious làm trọng số ground truth
         object_loss = self.bce((predictions[..., 4:5][obj]), (ious * target[..., 4:5][obj]))
 
-        # 3. Box Coordinates Loss (Sử dụng clone để tránh sửa trực tiếp tensor gốc)
-        pred_box = predictions[..., 0:4].clone()
-        pred_box[..., 0:2] = self.sigmoid(pred_box[..., 0:2])
-        
-        target_box = target[..., 0:4].clone()
-        target_box[..., 2:4] = torch.log(1e-16 + target_box[..., 2:4] / anchors)
-        
-        box_loss = self.mse(pred_box[obj], target_box[obj])
+        # 3. Box Coordinates Loss (Sử dụng CIoU Loss thay cho MSE)
+        # pred_box_temp đã ở định dạng (x, y, w, h) chuẩn nên ta dùng trực tiếp
+        ciou = intersection_over_union(pred_box_temp[obj], target[..., 0:4][obj], return_ciou=True)
+        box_loss = torch.mean(1 - ciou)
 
         # 4. Class Loss
         class_loss = self.entropy(

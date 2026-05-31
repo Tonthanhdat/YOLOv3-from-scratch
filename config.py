@@ -21,15 +21,15 @@ CLASSES = ["person", "car", "dog", "cat", "chair"]
 
 # Anchors (Khởi tạo default của YOLOv3, sẽ dùng KMeans để tính lại sau)
 ANCHORS = [
-    [(116, 90), (156, 198), (373, 326)], # Scale 13x13 (Stride 32)
-    [(30, 61), (62, 45), (59, 119)],     # Scale 26x26 (Stride 16)
-    [(10, 13), (16, 30), (33, 23)],      # Scale 52x52 (Stride 8)
+    [(199, 146), (146, 237), (292, 276)], # Scale 13x13 (Stride 32)
+    [(50, 106), (96, 77), (91, 162)],     # Scale 26x26 (Stride 16)
+    [(18, 24), (27, 62), (51, 37)],       # Scale 52x52 (Stride 8)
 ]
 
 # Tỉ lệ grid so với input size (Scale ratios)
 S = [IMAGE_SIZE // 32, IMAGE_SIZE // 16, IMAGE_SIZE // 8]
 
 # Ngưỡng cho NMS & loss
-CONF_THRESHOLD = 0.4
+CONF_THRESHOLD = 0.5
 NMS_THRESHOLD = 0.45
 IGNORE_IOU_THRESH = 0.5 # Ngưỡng bỏ qua target cho prediction box nếu IoU > threshold

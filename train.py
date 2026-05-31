@@ -49,6 +49,10 @@ def main(args):
     model = YOLOv3(num_classes=config.NUM_CLASSES).to(config.DEVICE)
     optimizer = optim.Adam(model.parameters(), lr=config.LEARNING_RATE, weight_decay=config.WEIGHT_DECAY)
     
+    os.makedirs(args.checkpoint_dir, exist_ok=True)
+    best_val_loss = float("inf")
+    start_epoch = 0
+
     # Tự động tiếp tục từ file được chỉ định hoặc mặc định từ last.pth
     checkpoint_file = args.resume if args.resume else os.path.join(args.checkpoint_dir, "last.pth")
     if os.path.exists(checkpoint_file):
@@ -56,8 +60,20 @@ def main(args):
         checkpoint = torch.load(checkpoint_file, map_location=config.DEVICE, weights_only=False)
         model.load_state_dict(checkpoint["state_dict"])
         optimizer.load_state_dict(checkpoint["optimizer"])
+        if "best_val_loss" in checkpoint:
+            best_val_loss = checkpoint["best_val_loss"]
+        if "epoch" in checkpoint:
+            start_epoch = checkpoint["epoch"] + 1
     else:
         print(f"=> Không tìm thấy checkpoint để tiếp tục. Sẽ huấn luyện từ đầu (Train from scratch).")
+
+    # Thêm LR Scheduler (Công nghệ Cosine Annealing giúp tăng mAP)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.NUM_EPOCHS, eta_min=1e-6)
+    
+    # Cập nhật state cho scheduler nếu resume
+    if start_epoch > 0:
+        for _ in range(start_epoch):
+            scheduler.step()
 
     loss_fn = YOLOLoss()
     scaler = torch.cuda.amp.GradScaler() if config.DEVICE == 'cuda' else None
@@ -109,8 +125,8 @@ def main(args):
     os.makedirs(args.checkpoint_dir, exist_ok=True)
     best_val_loss = float("inf")
 
-    for epoch in range(config.NUM_EPOCHS):
-        print(f"Epoch {epoch+1}/{config.NUM_EPOCHS}")
+    for epoch in range(start_epoch, config.NUM_EPOCHS):
+        print(f"Epoch {epoch+1}/{config.NUM_EPOCHS} (LR: {optimizer.param_groups[0]['lr']:.6f})")
         model.train()
         train_fn(train_loader, model, optimizer, loss_fn, scaler, scaled_anchors)
         
@@ -141,6 +157,8 @@ def main(args):
         checkpoint = {
             "state_dict": model.state_dict(),
             "optimizer": optimizer.state_dict(),
+            "best_val_loss": best_val_loss,
+            "epoch": epoch
         }
         
         # Lưu mô hình tốt nhất dựa trên val loss
@@ -151,6 +169,9 @@ def main(args):
             
         # Luôn lưu checkpoint cuối cùng
         torch.save(checkpoint, os.path.join(args.checkpoint_dir, "last.pth"))
+        
+        # Cập nhật LR Scheduler
+        scheduler.step()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
