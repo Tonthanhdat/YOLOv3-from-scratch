@@ -74,6 +74,9 @@ def intersection_over_union(boxes_preds, boxes_labels, box_format="midpoint", re
     with torch.no_grad():
         alpha = v / (1 - iou + v + 1e-6)
         
+    ciou = iou - (rho2 / c2 + v * alpha)
+    return ciou
+
 def non_max_suppression(bboxes, iou_threshold, threshold, box_format="corners"):
     """
     Thực hiện Non Max Suppression bằng PyTorch thuần (Vectorized).
