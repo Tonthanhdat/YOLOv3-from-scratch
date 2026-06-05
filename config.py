@@ -30,6 +30,6 @@ ANCHORS = [
 S = [IMAGE_SIZE // 32, IMAGE_SIZE // 16, IMAGE_SIZE // 8]
 
 # Ngưỡng cho NMS & loss
-CONF_THRESHOLD = 0.1  # Giảm xuống 0.1 để giữ recall khi tính mAP
-NMS_THRESHOLD = 0.45  # Trả về mặc định 0.45 để không xóa nhầm box
+CONF_THRESHOLD = 0.25  # Giảm xuống 0.1 để giữ recall khi tính mAP
+NMS_THRESHOLD = 0.50  # Trả về mặc định 0.45 để không xóa nhầm box
 IGNORE_IOU_THRESH = 0.5 # Ngưỡng bỏ qua target cho prediction box nếu IoU > threshold

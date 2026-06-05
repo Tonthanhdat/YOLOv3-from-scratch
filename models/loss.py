@@ -1,58 +1,48 @@
 import torch
 import torch.nn as nn
+
 from utils.boxes import intersection_over_union
+
 
 class YOLOLoss(nn.Module):
     def __init__(self):
         super().__init__()
-        self.mse = nn.MSELoss()
         self.bce = nn.BCEWithLogitsLoss()
         self.entropy = nn.CrossEntropyLoss()
         self.sigmoid = nn.Sigmoid()
 
-        # Trọng số của các thành phần loss theo YOLOv3 paper
         self.lambda_class = 1
-        self.lambda_noobj = 5 # Giảm từ 10 xuống 5 vì Backbone mới phân loại tốt hơn
+        self.lambda_noobj = 5
         self.lambda_obj = 1
         self.lambda_box = 10
 
     def forward(self, predictions, target, anchors):
-        """
-        predictions: [batch_size, 3, S, S, 5+num_classes] (chưa qua activation function nào)
-        target: [batch_size, 3, S, S, 5+num_classes]
-        anchors: tensor [3, 2] (width, height tương đối so với toàn bộ ảnh)
-        """
-        # Xác định obj và noobj (theo giá trị obj_conf trong target)
         obj = target[..., 4] == 1
         noobj = target[..., 4] == 0
-        
-        # 1. No Object Loss
+
         no_object_loss = self.bce(
             predictions[..., 4:5][noobj], target[..., 4:5][noobj]
         )
 
-        # 2. Object Loss
         anchors = anchors.reshape(1, 3, 1, 1, 2)
-        
-        # Sử dụng bản sao để tính IoU, tránh inplace operation
-        # Ngăn lỗi NaN nếu batch không có object nào trên grid này
         if obj.sum() == 0:
             return self.lambda_noobj * no_object_loss
 
-        pred_box_temp = predictions[..., 0:4].clone()
-        pred_box_temp[..., 0:2] = self.sigmoid(pred_box_temp[..., 0:2])
-        pred_box_temp[..., 2:4] = torch.exp(pred_box_temp[..., 2:4]) * anchors
-        
-        ious = intersection_over_union(pred_box_temp[obj], target[..., 0:4][obj]).detach()
-        # Mục tiêu BCE ở đây sử dụng ious làm trọng số ground truth
-        object_loss = self.bce((predictions[..., 4:5][obj]), (ious * target[..., 4:5][obj]))
+        pred_box = predictions[..., 0:4].clone()
+        pred_box[..., 0:2] = self.sigmoid(pred_box[..., 0:2])
+        pred_box[..., 2:4] = torch.exp(pred_box[..., 2:4]) * anchors
 
-        # 3. Box Coordinates Loss (Sử dụng CIoU Loss thay cho MSE)
-        # pred_box_temp đã ở định dạng (x, y, w, h) chuẩn nên ta dùng trực tiếp
-        ciou = intersection_over_union(pred_box_temp[obj], target[..., 0:4][obj], return_ciou=True)
+        ious = intersection_over_union(pred_box[obj], target[..., 0:4][obj]).detach()
+        object_loss = self.bce(
+            predictions[..., 4:5][obj],
+            ious * target[..., 4:5][obj],
+        )
+
+        ciou = intersection_over_union(
+            pred_box[obj], target[..., 0:4][obj], return_ciou=True
+        )
         box_loss = torch.mean(1 - ciou)
 
-        # 4. Class Loss
         class_loss = self.entropy(
             predictions[..., 5:][obj], target[..., 5:][obj].argmax(-1)
         )

@@ -32,8 +32,12 @@ def train_fn(train_loader, model, optimizer, loss_fn, scaler, scaled_anchors):
                 + loss_fn(out[2], y2, scaled_anchors[2])
             )
 
-        losses.append(loss.item())
         optimizer.zero_grad()
+        if not torch.isfinite(loss):
+            loop.set_postfix(loss="non-finite")
+            continue
+
+        losses.append(loss.item())
         
         if config.DEVICE == 'cuda':
             scaler.scale(loss).backward()
@@ -63,27 +67,53 @@ def set_freeze_state(model, epoch):
         for param in model.layer3.parameters(): param.requires_grad = True
         for param in model.layer4.parameters(): param.requires_grad = True
 
+def set_trainable_state(model, epoch, freeze_backbone):
+    if not freeze_backbone:
+        for param in model.parameters():
+            param.requires_grad = True
+        return
+
+    # Freeze early pretrained features, then fine-tune deeper stages.
+    for param in model.stem.parameters(): param.requires_grad = False
+    for param in model.layer1.parameters(): param.requires_grad = False
+    for param in model.layer2.parameters(): param.requires_grad = False
+
+    if epoch < 5:
+        for param in model.layer3.parameters(): param.requires_grad = False
+        for param in model.layer4.parameters(): param.requires_grad = False
+    else:
+        for param in model.layer3.parameters(): param.requires_grad = True
+        for param in model.layer4.parameters(): param.requires_grad = True
+
 def main(args):
     print(f"Training on device: {config.DEVICE}")
-    model = ResNetFPNDetector(num_classes=config.NUM_CLASSES, pretrained=True).to(config.DEVICE)
+    use_pretrained_backbone = not args.no_pretrained_backbone
+    model = ResNetFPNDetector(
+        num_classes=config.NUM_CLASSES,
+        pretrained=use_pretrained_backbone
+    ).to(config.DEVICE)
+    print(f"Pretrained backbone: {use_pretrained_backbone}")
+    
+    backbone_lr = 1e-5 if use_pretrained_backbone else config.LEARNING_RATE
+    head_lr = config.LEARNING_RATE
     
     # Param groups cho optimizer
     optimizer = optim.AdamW([
-        {"params": model.stem.parameters(), "lr": 1e-5},
-        {"params": model.layer1.parameters(), "lr": 1e-5},
-        {"params": model.layer2.parameters(), "lr": 1e-5},
-        {"params": model.layer3.parameters(), "lr": 1e-5},
-        {"params": model.layer4.parameters(), "lr": 1e-5},
+        {"params": model.stem.parameters(), "lr": backbone_lr},
+        {"params": model.layer1.parameters(), "lr": backbone_lr},
+        {"params": model.layer2.parameters(), "lr": backbone_lr},
+        {"params": model.layer3.parameters(), "lr": backbone_lr},
+        {"params": model.layer4.parameters(), "lr": backbone_lr},
         
-        {"params": model.lat_c5.parameters(), "lr": 1e-4},
-        {"params": model.lat_c4.parameters(), "lr": 1e-4},
-        {"params": model.lat_c3.parameters(), "lr": 1e-4},
-        {"params": model.smooth_p4.parameters(), "lr": 1e-4},
-        {"params": model.smooth_p3.parameters(), "lr": 1e-4},
+        {"params": model.lat_c5.parameters(), "lr": head_lr},
+        {"params": model.lat_c4.parameters(), "lr": head_lr},
+        {"params": model.lat_c3.parameters(), "lr": head_lr},
+        {"params": model.smooth_p4.parameters(), "lr": head_lr},
+        {"params": model.smooth_p3.parameters(), "lr": head_lr},
         
-        {"params": model.head_p5.parameters(), "lr": 1e-4},
-        {"params": model.head_p4.parameters(), "lr": 1e-4},
-        {"params": model.head_p3.parameters(), "lr": 1e-4},
+        {"params": model.head_p5.parameters(), "lr": head_lr},
+        {"params": model.head_p4.parameters(), "lr": head_lr},
+        {"params": model.head_p3.parameters(), "lr": head_lr},
     ], weight_decay=config.WEIGHT_DECAY)
     
     os.makedirs(args.checkpoint_dir, exist_ok=True)
@@ -91,7 +121,7 @@ def main(args):
     start_epoch = 0
 
     checkpoint_file = args.resume if args.resume else os.path.join(args.checkpoint_dir, "last.pth")
-    if os.path.exists(checkpoint_file):
+    if not args.fresh_start and os.path.exists(checkpoint_file):
         print(f"=> Tìm thấy checkpoint: {checkpoint_file}. Đang tải để tiếp tục huấn luyện...")
         checkpoint = torch.load(checkpoint_file, map_location=config.DEVICE, weights_only=False)
         model.load_state_dict(checkpoint["state_dict"])
@@ -101,16 +131,16 @@ def main(args):
         if "epoch" in checkpoint:
             start_epoch = checkpoint["epoch"] + 1
     else:
-        print(f"=> Không tìm thấy checkpoint để tiếp tục. Sẽ huấn luyện từ đầu (Train from scratch).")
+        print("=> Starting a new training run.")
 
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.NUM_EPOCHS, eta_min=1e-6)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
     
     if start_epoch > 0:
         for _ in range(start_epoch):
             scheduler.step()
 
     loss_fn = YOLOLoss()
-    scaler = torch.cuda.amp.GradScaler() if config.DEVICE == 'cuda' else None
+    scaler = torch.amp.GradScaler("cuda") if config.DEVICE == 'cuda' else None
 
     train_transform = YoloTransforms(image_size=config.IMAGE_SIZE, is_train=True)
     train_dataset = YOLODataset(
@@ -136,11 +166,14 @@ def main(args):
         * torch.tensor(config.S).unsqueeze(1).unsqueeze(1).repeat(1, 3, 2)
     ).to(config.DEVICE)
 
-    for epoch in range(start_epoch, config.NUM_EPOCHS):
-        print(f"Epoch {epoch+1}/{config.NUM_EPOCHS} (LR: {optimizer.param_groups[-1]['lr']:.6f})")
+    for epoch in range(start_epoch, args.epochs):
+        print(f"Epoch {epoch+1}/{args.epochs} (LR: {optimizer.param_groups[-1]['lr']:.6f})")
         
         # Áp dụng chiến thuật đóng băng (Freeze/Unfreeze)
-        set_freeze_state(model, epoch)
+        if use_pretrained_backbone and not args.no_freeze_pretrained_backbone:
+            set_freeze_state(model, epoch)
+        else:
+            set_trainable_state(model, epoch, freeze_backbone=False)
         
         model.train()
         train_fn(train_loader, model, optimizer, loss_fn, scaler, scaled_anchors)
@@ -155,7 +188,7 @@ def main(args):
         torch.save(checkpoint, os.path.join(args.checkpoint_dir, "last.pth"))
         
         # Chấm điểm mAP mỗi 5 epoch
-        if (epoch + 1) % 5 == 0 or epoch == config.NUM_EPOCHS - 1:
+        if (epoch + 1) % 5 == 0 or epoch == args.epochs - 1:
             print("Đang đánh giá mAP trên tập Validation...")
             model.eval()
             
@@ -197,6 +230,10 @@ if __name__ == "__main__":
     parser.add_argument("--val_image_dir", type=str, required=True, help="Path to val images")
     parser.add_argument("--checkpoint_dir", type=str, required=True, help="Path to save models")
     parser.add_argument("--resume", type=str, default="", help="Path to specific checkpoint to resume from (e.g. models/best.pth)")
+    parser.add_argument("--epochs", type=int, default=config.NUM_EPOCHS, help="Total number of epochs to train")
+    parser.add_argument("--fresh_start", action="store_true", help="Ignore last.pth and train from random initialization")
+    parser.add_argument("--no_pretrained_backbone", action="store_true", help="Disable ImageNet pretrained ResNet50 backbone")
+    parser.add_argument("--no_freeze_pretrained_backbone", action="store_true", help="Fine-tune all pretrained backbone stages from the first epoch")
     args = parser.parse_args()
 
     main(args)
